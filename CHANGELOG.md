@@ -24,6 +24,7 @@
 - Preserve concurrent user PATH changes and validate installer state before removal mutates PATH or files.
 - Recover incomplete draft releases safely and verify an existing published release without requiring byte-for-byte reproducible ZIP timestamps.
 - Preserve the upstream OpenAI Codex and Ratatui attribution in distributed release notices.
+- Refresh the upstream workspace package versions in `Cargo.lock` so the pinned Codex tag builds reproducibly with `--locked`.
 
 ## 0.1.0 - 2026-07-10
 
