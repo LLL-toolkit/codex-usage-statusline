@@ -103,7 +103,7 @@ jobs:
 
   build:
     needs: [metadata, patch-tests]
-    timeout-minutes: 90
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
