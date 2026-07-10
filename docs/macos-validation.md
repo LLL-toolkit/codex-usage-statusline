@@ -1,6 +1,6 @@
 # macOS Apple Silicon 검증 기록
 
-> 현재 상태: **v0.3.0 릴리스 후보 검증 중**. 설치기·제거기와 격리 통합 테스트는 구현됐지만, GitHub Actions 산출물과 production Release URL의 실기기 설치가 끝날 때까지 README의 macOS 항목은 지원 완료로 전환하지 않습니다.
+> 현재 상태: **v0.3.0 production Release URL 검증 대기**. GitHub Actions 릴리스 후보와 Apple Silicon 실기기 설치·제거 검증은 통과했습니다. 태그 릴리스의 기본 HTTPS URL 검증이 끝날 때까지 README의 macOS 항목은 지원 완료로 전환하지 않습니다.
 
 ## 구현 기준
 
@@ -71,19 +71,38 @@ Apple 코드 서명과 별개로 릴리스 체크섬은 프로젝트 RSA 키로 
 
 ad-hoc 서명은 Apple Developer ID 신원이나 공증을 제공하지 않습니다. 따라서 Finder나 브라우저가 격리 속성을 붙인 파일은 Gatekeeper의 `spctl` 평가에서 거부될 수 있습니다. 설치기는 이 제한을 숨기기 위해 격리 속성을 삭제하지 않습니다.
 
-## 남은 실기기 게이트
+## 릴리스 후보 실기기 기록
 
-- [ ] 일반 push CI에서 macOS 설치기 테스트 통과
-- [ ] workflow dispatch에서 실제 arm64 빌드·strip·codesign·집중 Rust 테스트 통과
-- [ ] 완성된 release bundle의 전체 파일 집합과 SHA-256 재검증
-- [ ] npm 설치의 공식 Codex 0.144.1에서 릴리스 후보 설치
-- [ ] 새 zsh와 bash에서 `command -v codex`, `codex --version` 확인
-- [ ] 한국어·영어·일본어의 실제 TUI 라벨과 숫자·그래프 확인
-- [ ] 설치 전후와 제거 후 실제 `~/.codex/config.toml` 존재 여부 및 SHA-256 불변 확인
-- [ ] 실제 아카이브와 설치된 내부 바이너리 SHA-256 대조
-- [ ] 제거 후 공식 Codex 명령 복원
+2026-07-10 20:09~20:22 KST에 다음 환경에서 테스트 모드가 아닌 로컬 릴리스 후보 흐름을 실행했습니다.
+
+- 장비: Mac14,15, Apple M2, arm64
+- 운영체제: macOS 26.5.2 (25F84)
+- 공식 설치: npm, `/opt/homebrew/bin/codex`, `codex-cli 0.144.1`
+- customization commit: `e62540439c74609e4f10d18d0957d4e320267c77`
+- 일반 CI: [run 29084361212](https://github.com/LLL-toolkit/codex-usage-statusline/actions/runs/29084361212)
+- 릴리스 후보 빌드: [run 29084373395](https://github.com/LLL-toolkit/codex-usage-statusline/actions/runs/29084373395)
+
+RSA 서명을 먼저 확인한 뒤 두 대상의 전체 release bundle을 재검증했습니다. Apple Silicon 아카이브 SHA-256은 `345b0b549b2ccc347b59b08fab902cf664ab6e0a19839001fff5ff637fb78db8`, 아카이브 내부와 설치 후 커스텀 바이너리 SHA-256은 모두 `e42302d800f6932326f4502614f1f012be2e94d75b97fbefd031079b7c15cc14`였습니다. 바이너리는 `arm64` 하나만 포함했고 `codex-cli 0.144.1`을 반환했습니다.
+
+설치 후 새 zsh와 bash는 모두 `~/Library/Application Support/codex-usage-statusline/bin/codex`를 해석했습니다. 같은 언어의 반복 설치는 두 프로필의 SHA-256을 바꾸지 않았고 각 프로필에 시작·종료 marker를 하나씩만 유지했습니다. 한국어 `컨텍스트·사용량·주간`, 영어 `Context·Usage·Weekly`, 일본어 `コンテキスト·使用量·週間`과 각 reset 문구, 실제 퍼센트, 10칸 막대를 180열 true-color TUI에서 확인했습니다. 정상 구간의 실제 전경색은 세 언어 모두 `#c4b5fd`였습니다.
+
+실제 `~/.codex/config.toml`은 설치 전, 각 언어 설치 후, 반복 설치 후, 각 제거 후 모두 `present:908af63a3cbda50f47bbb084d873706fd613466245029e75efa067e200a187b5`로 동일했습니다. 제거 후 `~/.zprofile`은 설치 전 SHA-256 `aa7829da6536e747ae3a45666ea5c0392dee0f45da0cac36a1d26643d5af2bb3`으로 복원됐고, 원래 없던 `~/.bash_profile`은 다시 없어졌습니다. 활성 manifest, 실행기와 버전 payload가 제거됐으며 새 zsh와 bash 모두 공식 `/opt/homebrew/bin/codex`와 `codex-cli 0.144.1`로 복원됐습니다.
+
+추출 직후와 설치 후 바이너리 모두 `codesign --verify --deep --strict --verbose=2`를 통과했습니다. Developer ID와 공증이 없으므로 `spctl --assess --type execute --verbose=2`는 예상대로 상태 3과 `rejected`를 반환했습니다.
+
+## 검증 게이트
+
+- [x] 일반 push CI에서 macOS 설치기 테스트 통과
+- [x] workflow dispatch에서 실제 arm64 빌드·strip·codesign·집중 Rust 테스트 통과
+- [x] 완성된 release bundle의 전체 파일 집합과 SHA-256 재검증
+- [x] npm 설치의 공식 Codex 0.144.1에서 릴리스 후보 설치
+- [x] 새 zsh와 bash에서 `command -v codex`, `codex --version` 확인
+- [x] 한국어·영어·일본어의 실제 TUI 라벨과 숫자·그래프 확인
+- [x] 설치 전후와 제거 후 실제 `~/.codex/config.toml` 존재 여부 및 SHA-256 불변 확인
+- [x] 실제 아카이브와 설치된 내부 바이너리 SHA-256 대조
+- [x] 제거 후 공식 Codex 명령 복원
 - [ ] v0.3.0 production GitHub Release URL에서 동일 흐름 재확인
 
-모든 항목이 끝나면 이 문서에 실행 시각, 장비·OS, 설치 방식, 명령 해석 경로, 아카이브·바이너리 해시, `codesign`·`spctl`, config 불변 결과를 기록하고 지원 상태를 전환합니다.
+마지막 production URL 항목이 끝나면 같은 결과를 아래에 추가하고 지원 상태를 전환합니다.
 
 관련 문서: [README](../README.md), [릴리스 절차](release-process.md).
