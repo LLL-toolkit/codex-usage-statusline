@@ -1,0 +1,174 @@
+diff --git a/codex-rs/tui/src/bottom_pane/status_line_style.rs b/codex-rs/tui/src/bottom_pane/status_line_style.rs
+index 4198943..9b39730 100644
+--- a/codex-rs/tui/src/bottom_pane/status_line_style.rs
++++ b/codex-rs/tui/src/bottom_pane/status_line_style.rs
+@@ -105,10 +105,12 @@ where
+             spans.push(STATUS_LINE_SEPARATOR.dim());
+         }
+         let style = if use_theme_colors {
+-            let accent = StatusLineAccent::for_item(item);
+-            soften_status_line_style(
+-                theme_style_for_accent(accent).unwrap_or_else(|| accent.fallback_style()),
+-            )
++            usage_status_style(item, &text).unwrap_or_else(|| {
++                let accent = StatusLineAccent::for_item(item);
++                soften_status_line_style(
++                    theme_style_for_accent(accent).unwrap_or_else(|| accent.fallback_style()),
++                )
++            })
+         } else {
+             Style::default().dim()
+         };
+@@ -123,6 +125,32 @@ where
+     (!spans.is_empty()).then(|| Line::from(spans))
+ }
+ 
++fn usage_status_style(item: StatusLineItem, text: &str) -> Option<Style> {
++    if !matches!(
++        item,
++        StatusLineItem::ContextRemaining
++            | StatusLineItem::ContextUsed
++            | StatusLineItem::FiveHourLimit
++            | StatusLineItem::WeeklyLimit
++    ) {
++        return None;
++    }
++
++    let percent = text
++        .split_whitespace()
++        .find_map(|part| part.strip_suffix('%'))?
++        .parse::<f64>()
++        .ok()?;
++    let color = if percent >= 85.0 {
++        Color::Red
++    } else if percent >= 60.0 {
++        Color::Yellow
++    } else {
++        Color::Rgb(196, 181, 253)
++    };
++    Some(Style::default().fg(color))
++}
++
+ fn soften_status_line_style(mut style: Style) -> Style {
+     if let Some(fg) = style.fg {
+         style.fg = Some(soften_status_line_color(fg));
+@@ -205,12 +233,39 @@ mod tests {
+         assert_eq!(line_text(&line), "gpt-5 · /repo · main");
+         assert_eq!(line.spans[0].style.fg, Some(Color::Cyan));
+         assert!(!line.spans[0].style.add_modifier.contains(Modifier::DIM));
+-        assert_eq!(line.spans[2].style.fg, Some(Color::Green));
++        assert_eq!(line.spans[2].style.fg, Some(Color::Rgb(196, 181, 253)));
+         assert!(!line.spans[2].style.add_modifier.contains(Modifier::DIM));
+         assert_eq!(line.spans[4].style.fg, Some(Color::Magenta));
+         assert!(!line.spans[4].style.add_modifier.contains(Modifier::DIM));
+     }
+ 
++    #[test]
++    fn usage_status_colors_escalate_with_percent_used() {
++        let line = status_line_from_segments_with_resolver(
++            [
++                (
++                    StatusLineItem::ContextUsed,
++                    "Context ███░░░░░░░ 30%".to_string(),
++                ),
++                (
++                    StatusLineItem::FiveHourLimit,
++                    "Usage ███████░░░ 70%".to_string(),
++                ),
++                (
++                    StatusLineItem::WeeklyLimit,
++                    "Weekly █████████░ 90%".to_string(),
++                ),
++            ],
++            /*use_theme_colors*/ true,
++            |_| None,
++        )
++        .expect("status line");
++
++        assert_eq!(line.spans[0].style.fg, Some(Color::Rgb(196, 181, 253)));
++        assert_eq!(line.spans[2].style.fg, Some(Color::Yellow));
++        assert_eq!(line.spans[4].style.fg, Some(Color::Red));
++    }
++
+     #[test]
+     fn status_line_segments_dim_separators_and_use_theme_styles_first() {
+         let line = status_line_from_segments_with_resolver(
+diff --git a/codex-rs/tui/src/chatwidget/status_controls.rs b/codex-rs/tui/src/chatwidget/status_controls.rs
+index 2c58be9..82d074c 100644
+--- a/codex-rs/tui/src/chatwidget/status_controls.rs
++++ b/codex-rs/tui/src/chatwidget/status_controls.rs
+@@ -389,8 +389,16 @@ impl ChatWidget {
+         label: &str,
+     ) -> Option<String> {
+         let window = window?;
+-        let remaining = (100.0f64 - window.used_percent).clamp(0.0f64, 100.0f64);
+-        Some(format!("{label} {remaining:.0}% left"))
++        let used = window.used_percent.clamp(0.0f64, 100.0f64);
++        let reset = window
++            .resets_at
++            .as_deref()
++            .map(|resets_at| format!(" (초기화 {resets_at})"))
++            .unwrap_or_default();
++        Some(format!(
++            "{label} {} {used:.0}%{reset}",
++            status_line_progress_bar(used)
++        ))
+     }
+ 
+     pub(super) fn status_line_reasoning_effort_label(
+@@ -402,3 +410,9 @@ impl ChatWidget {
+         }
+     }
+ }
++
++pub(super) fn status_line_progress_bar(percent: f64) -> String {
++    const SEGMENTS: usize = 10;
++    let filled = ((percent.clamp(0.0, 100.0) / 100.0) * SEGMENTS as f64).round() as usize;
++    format!("{}{}", "█".repeat(filled), "░".repeat(SEGMENTS - filled))
++}
+diff --git a/codex-rs/tui/src/chatwidget/status_surfaces.rs b/codex-rs/tui/src/chatwidget/status_surfaces.rs
+index 7120462..14e413e 100644
+--- a/codex-rs/tui/src/chatwidget/status_surfaces.rs
++++ b/codex-rs/tui/src/chatwidget/status_surfaces.rs
+@@ -8,6 +8,7 @@ use crate::bottom_pane::status_line_from_segments;
+ use crate::branch_summary;
+ use crate::chatwidget::limit_label_for_window;
+ use crate::chatwidget::rate_limits::get_limits_duration;
++use crate::chatwidget::status_controls::status_line_progress_bar;
+ use crate::legacy_core::config::Config;
+ use crate::status::format_tokens_compact;
+ use codex_app_server_protocol::AskForApproval;
+@@ -694,26 +695,24 @@ impl ChatWidget {
+                 }
+             }
+             StatusLineItem::ContextRemaining => self
+-                .status_line_context_remaining_percent()
+-                .map(|remaining| format!("Context {remaining}% left")),
++                .status_line_context_used_percent()
++                .map(|used| format!("컨텍스트 {} {used}%", status_line_progress_bar(used as f64))),
+             StatusLineItem::ContextUsed => self
+                 .status_line_context_used_percent()
+-                .map(|used| format!("Context {used}% used")),
++                .map(|used| format!("컨텍스트 {} {used}%", status_line_progress_bar(used as f64))),
+             StatusLineItem::FiveHourLimit => {
+-                let (window, is_secondary) = self
++                let (window, _is_secondary) = self
+                     .rate_limit_snapshots_by_limit_id
+                     .get("codex")
+                     .and_then(five_hour_status_window)?;
+-                let label = limit_label_for_window(window.window_minutes, is_secondary);
+-                self.status_line_limit_display(Some(window), &label)
++                self.status_line_limit_display(Some(window), "사용량")
+             }
+             StatusLineItem::WeeklyLimit => {
+-                let (window, is_secondary) = self
++                let (window, _is_secondary) = self
+                     .rate_limit_snapshots_by_limit_id
+                     .get("codex")
+                     .and_then(weekly_status_window)?;
+-                let label = limit_label_for_window(window.window_minutes, is_secondary);
+-                self.status_line_limit_display(Some(window), &label)
++                self.status_line_limit_display(Some(window), "주간")
+             }
+             StatusLineItem::CodexVersion => Some(CODEX_CLI_VERSION.to_string()),
+             StatusLineItem::ContextWindowSize => self
