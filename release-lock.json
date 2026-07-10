@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "projectVersion": "0.2.0",
+  "releaseTag": "v0.2.0",
+  "codexVersion": "0.144.1",
+  "upstreamTag": "rust-v0.144.1",
+  "upstreamTagObject": "db75c19352d29ef29c17dbcf73a7244f1b1a8d10",
+  "upstreamCommit": "44918ea10c0f99151c6710411b4322c2f5c96bea",
+  "upstreamTree": "6c4d9c247f20ef879c8572eec76798edf9e96425",
+  "rustToolchain": "1.95.0",
+  "patch": {
+    "path": "patches/codex-0.144.1.patch",
+    "sha256": "1fb02b2d93503d85bdc917f7d14f08b67f8ad61e86b824860c22f23444382dc3"
+  },
+  "targets": [
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "triple": "x86_64-pc-windows-msvc",
+      "archive": "zip"
+    }
+  ]
+}

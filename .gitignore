@@ -1,3 +1,5 @@
 .artifacts/
 *.log
-
+dist/
+__pycache__/
+*.pyc

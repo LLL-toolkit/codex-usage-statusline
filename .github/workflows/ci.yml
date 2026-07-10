@@ -1,0 +1,42 @@
+name: lightweight-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Validate release lock
+        run: python3 scripts/verify_release_lock.py
+      - name: Check Python syntax
+        run: python3 -m py_compile scripts/verify_release_lock.py
+      - name: Check patch applies to the locked Codex commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout https://github.com/openai/codex.git "$RUNNER_TEMP/codex"
+          git -C "$RUNNER_TEMP/codex" fetch --depth 1 origin 44918ea10c0f99151c6710411b4322c2f5c96bea
+          git -C "$RUNNER_TEMP/codex" checkout --detach FETCH_HEAD
+          git -C "$RUNNER_TEMP/codex" apply --check "$GITHUB_WORKSPACE/patches/codex-0.144.1.patch"
+
+  windows-installer:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Windows PowerShell 5.1 helper tests
+        shell: powershell
+        run: .\tests\installer-helpers.tests.ps1
+      - name: PowerShell 7 helper tests
+        shell: pwsh
+        run: .\tests\installer-helpers.tests.ps1
