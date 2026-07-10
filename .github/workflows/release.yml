@@ -102,7 +102,7 @@ jobs:
         run: cargo test --locked -p codex-tui status_line_
 
   build:
-    needs: [metadata, patch-tests]
+    needs: metadata
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -214,7 +214,7 @@ jobs:
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [metadata, build]
+    needs: [metadata, patch-tests, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
