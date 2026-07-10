@@ -102,6 +102,8 @@ GitHub Release가 공개되면 Apple Silicon 실기기에서 기본 HTTPS URL을
 
 설치기는 production URL을 사용할 때 원격 태그의 peeled commit을 직접 조회해 서명된 `customizationCommit`과 대조합니다. 결과를 `docs/macos-validation.md`와 추적 이슈에 기록한 뒤에만 Apple Silicon 지원 완료를 표시하고 prerelease를 정식 릴리스로 승격합니다.
 
+v0.3.0은 [태그 워크플로 run 29089398011](https://github.com/LLL-toolkit/codex-usage-statusline/actions/runs/29089398011)에서 빌드·서명·게시됐고, [v0.3.0 production Release URL](https://github.com/LLL-toolkit/codex-usage-statusline/releases/tag/v0.3.0)의 Apple Silicon 실기기 설치·실행·제거 게이트를 통과했습니다. 장비, 해시와 Gatekeeper 결과는 [macOS 검증 기록](macos-validation.md)에 고정합니다.
+
 ## 새 Codex 버전
 
 1. 새 공식 태그의 객체, peeled commit, tree, Rust 버전과 Windows/macOS npm 플랫폼 게시 상태를 확인합니다.

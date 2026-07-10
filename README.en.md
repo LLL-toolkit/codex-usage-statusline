@@ -10,8 +10,6 @@ gpt-5.6-sol low · Context ██░░░░░░░░ 18% · Usage █░░
 
 ## Install
 
-> Apple Silicon macOS support is a v0.3.0 release candidate and is not yet a general installation target. Until real-device install and removal validation is complete, use the macOS commands below only for release-candidate development validation.
-
 Ask your current Codex CLI:
 
 ```text
@@ -25,7 +23,7 @@ Close the current Codex session and terminal after installation, then open a new
 
 To run the repository installer directly:
 
-Apple Silicon macOS v0.3.0 release-candidate development validation:
+Apple Silicon macOS:
 
 ```sh
 git clone https://github.com/LLL-toolkit/codex-usage-statusline.git
@@ -46,13 +44,13 @@ Korean `ko` is the default. English `en` and Japanese `ja` are also available.
 ## Compatibility
 
 - Codex CLI **0.144.1**
-- Windows x64 supported; Apple Silicon macOS v0.3.0 release candidate in validation
+- Windows x64 and Apple Silicon macOS supported
 - Intel Macs are not supported
 
 | Platform | Release build | Real-device validation |
 |---|---:|---:|
 | Windows x64 | Automated | Supported |
-| Apple Silicon macOS | Automated | v0.3.0 release candidate in validation |
+| Apple Silicon macOS | Automated | Supported |
 
 Codex's internal TUI is not a stable plugin API, so the version must match exactly. The installer activates nothing if the version, asset, hash, or target architecture differs.
 
@@ -82,7 +80,7 @@ The installer and uninstaller never create or edit `~/.codex/config.toml`. The l
 
 ## Uninstall
 
-Apple Silicon macOS v0.3.0 release-candidate development validation:
+Apple Silicon macOS:
 
 ```sh
 ./uninstall.sh

@@ -1,6 +1,6 @@
 # macOS Apple Silicon 검증 기록
 
-> 현재 상태: **v0.3.0 production Release URL 검증 대기**. GitHub Actions 릴리스 후보와 Apple Silicon 실기기 설치·제거 검증은 통과했습니다. 태그 릴리스의 기본 HTTPS URL 검증이 끝날 때까지 README의 macOS 항목은 지원 완료로 전환하지 않습니다.
+> 현재 상태: **v0.3.0 Apple Silicon 지원 검증 완료**. GitHub Actions 릴리스 후보와 태그 릴리스의 production HTTPS URL을 모두 Apple Silicon 실기기에서 설치·실행·제거 검증했습니다. Intel Mac은 지원하지 않습니다.
 
 ## 구현 기준
 
@@ -90,6 +90,24 @@ RSA 서명을 먼저 확인한 뒤 두 대상의 전체 release bundle을 재검
 
 추출 직후와 설치 후 바이너리 모두 `codesign --verify --deep --strict --verbose=2`를 통과했습니다. Developer ID와 공증이 없으므로 `spctl --assess --type execute --verbose=2`는 예상대로 상태 3과 `rejected`를 반환했습니다.
 
+## Production URL 실기기 기록
+
+2026-07-10 21:55~22:06 KST에 [v0.3.0 GitHub Release](https://github.com/LLL-toolkit/codex-usage-statusline/releases/tag/v0.3.0)의 기본 HTTPS URL만 사용하는 설치 흐름을 같은 장비에서 다시 실행했습니다.
+
+- 태그 commit: `7fc7ff68312b85c97242044847d3c5085f43c812`
+- 태그 빌드·서명·게시: [run 29089398011](https://github.com/LLL-toolkit/codex-usage-statusline/actions/runs/29089398011)
+- 게시 상태: 검증 시 draft가 아닌 prerelease, 자산 9개 모두 업로드 완료
+- Apple Silicon 아카이브 SHA-256: `3b7750b79e28bcd329a8f775d1f5a2500e289416bf96891c7e165b5b4ff3ac2d`
+- 아카이브 내부와 설치 바이너리 SHA-256: `b3d1d2dbb0ab4575355ec1a15f2683c77368245943fbffb12937f6ccc54a3365`
+
+게시된 9개 자산을 별도 디렉터리에 다시 다운로드해 RSA 서명, 전체 파일 집합, aggregate·sidecar 체크섬, 태그의 peeled commit, 외부·내부 metadata와 두 대상의 바이너리 해시를 재검증했습니다. 별도 후보 환경 변수나 로컬 자산 옵션 없이 `./install.sh`를 실행했고, manifest의 `customizationCommit`이 태그 commit과 일치하는지 확인했습니다.
+
+한국어 기본 설치와 같은 언어 반복 설치, 제거 후 영어 설치, 제거 후 일본어 설치를 production URL에서 순서대로 실행했습니다. 새 zsh와 bash는 설치 중 side-by-side 실행기와 `codex-cli 0.144.1`을 해석했습니다. 세 언어 모두 실제 reset 문구, 퍼센트, 10칸 막대 세 개와 정상 구간 `#c4b5fd`를 true-color PTY 기록에서 다시 확인했습니다.
+
+실제 `~/.codex/config.toml`은 전체 production 흐름 전후와 각 설치·제거 사이에 모두 `present:908af63a3cbda50f47bbb084d873706fd613466245029e75efa067e200a187b5`였습니다. 최종 제거 후 `~/.zprofile`은 원래 SHA-256 `aa7829da6536e747ae3a45666ea5c0392dee0f45da0cac36a1d26643d5af2bb3`으로 복원됐고 `~/.bash_profile`은 다시 없어졌습니다. 활성 manifest, 실행기와 버전 payload가 제거됐으며 zsh와 bash 모두 공식 `/opt/homebrew/bin/codex`와 `codex-cli 0.144.1`로 복원됐습니다.
+
+게시된 바이너리도 추출 직후와 설치 후 `arm64` 하나만 포함했고 `codesign --verify --deep --strict --verbose=2`를 통과했습니다. Developer ID와 공증이 없으므로 `spctl`은 후보와 동일하게 상태 3과 `rejected`를 반환했습니다.
+
 ## 검증 게이트
 
 - [x] 일반 push CI에서 macOS 설치기 테스트 통과
@@ -101,8 +119,8 @@ RSA 서명을 먼저 확인한 뒤 두 대상의 전체 release bundle을 재검
 - [x] 설치 전후와 제거 후 실제 `~/.codex/config.toml` 존재 여부 및 SHA-256 불변 확인
 - [x] 실제 아카이브와 설치된 내부 바이너리 SHA-256 대조
 - [x] 제거 후 공식 Codex 명령 복원
-- [ ] v0.3.0 production GitHub Release URL에서 동일 흐름 재확인
+- [x] v0.3.0 production GitHub Release URL에서 동일 흐름 재확인
 
-마지막 production URL 항목이 끝나면 같은 결과를 아래에 추가하고 지원 상태를 전환합니다.
+모든 게이트를 통과해 v0.3.0부터 Apple Silicon macOS 지원 상태로 전환했습니다. Developer ID와 공증이 도입되기 전까지 위 Gatekeeper 제한은 계속 적용됩니다.
 
 관련 문서: [README](../README.md), [릴리스 절차](release-process.md).

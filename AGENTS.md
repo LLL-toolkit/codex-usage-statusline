@@ -6,7 +6,7 @@ Use the verified prebuilt release and the installer committed in this repository
 
 1. Confirm `codex --version` and the operating system/architecture.
 2. Run the matching installer:
-   - Apple Silicon macOS: `./install.sh --language ko` only after `docs/macos-validation.md` records completed release-candidate and production-URL gates; v0.3.0 remains a release candidate until then.
+   - Apple Silicon macOS: `./install.sh --language ko`
    - Windows x64: `powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -Language ko`
 3. Use `en` or `ja` only when that display language is requested. Korean is the default.
 4. Let the installer detect the official Codex layout, download the immutable release files, and validate checksums and metadata. Do not substitute another binary or mutable URL.
