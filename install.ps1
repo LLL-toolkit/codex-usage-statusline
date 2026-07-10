@@ -15,7 +15,7 @@ $ProjectVersion = '0.2.0'
 $SupportedCodexVersion = '0.144.1'
 $TargetTriple = 'x86_64-pc-windows-msvc'
 $ExpectedUpstreamCommit = '44918ea10c0f99151c6710411b4322c2f5c96bea'
-$ExpectedPatchSha256 = '58d94f313e71c957ecfbf192803315c0c2cc500c922c96c1ac92b5730f3061b3'
+$ExpectedPatchSha256 = '02d74d7c01f34c72e0c1e244db334ce09fde9dd01b12f56b6741f001ceed9d53'
 $Repository = 'LLL-toolkit/codex-usage-statusline'
 $StatusLineOverride = "tui.status_line=['model-with-reasoning','context-used','five-hour-limit','weekly-limit']"
 

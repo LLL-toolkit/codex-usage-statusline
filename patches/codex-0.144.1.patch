@@ -1269,7 +1269,7 @@ index 4198943..e9fd9e4 100644
      }
  
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap
-index 2ac794d..4d736a1 100644
+index 2ac794d..cdc073c 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap
 +++ b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_model_with_reasoning_fast_footer.snap
 @@ -6,4 +6,4 @@ expression: normalized_backend_snapshot(terminal.backend())
@@ -1277,7 +1277,7 @@ index 2ac794d..4d736a1 100644
  "› Ask Codex to do anything                                                      "
  "                                                                                "
 -"  gpt-5.4 xhigh fast · Context 0% used · /tmp/project                           "
-+"  gpt-5.4 xhigh fast · 컨텍스트 ░░░░░░░░░░ 0% · /tmp/project                  " Hidden by multi-width symbols: [(24, " "), (26, " "), (28, " "), (30, " ")]
++"  gpt-5.4 xhigh fast · 컨텍스트 ░░░░░░░░░░ 0% · /tmp/project                    " Hidden by multi-width symbols: [(24, " "), (26, " "), (28, " "), (30, " ")]
 diff --git a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_setup_popup_rate_limits.snap b/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_setup_popup_rate_limits.snap
 index 7dca3c1..3b56e8d 100644
 --- a/codex-rs/tui/src/chatwidget/snapshots/codex_tui__chatwidget__tests__status_line_setup_popup_rate_limits.snap
