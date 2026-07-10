@@ -121,6 +121,8 @@ def main() -> None:
     signing_key = ROOT / expected_signing["publicKeyPath"]
     if signing_key.is_symlink() or not signing_key.is_file():
         raise SystemExit("The release-signing public key is missing or unsafe")
+    if b"\r\n" in signing_key.read_bytes():
+        raise SystemExit("The release-signing public key must use LF line endings")
     if sha256(signing_key) != expected_signing["publicKeySha256"]:
         raise SystemExit("The release-signing public-key checksum does not match the lock")
     signing_modulus, signing_exponent = rsa_public_parameters(signing_key)
