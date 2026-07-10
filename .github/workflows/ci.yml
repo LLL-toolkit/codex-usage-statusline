@@ -18,7 +18,13 @@ jobs:
       - name: Validate release lock
         run: python3 scripts/verify_release_lock.py
       - name: Check Python syntax
-        run: python3 -m py_compile scripts/verify_release_lock.py
+        run: python3 -m py_compile scripts/*.py tests/release_assets_tests.py
+      - name: Check shell syntax and release helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh -n install.sh uninstall.sh scripts/macos_common.sh tests/macos-installer.tests.sh
+          python3 tests/release_assets_tests.py
       - name: Check patch applies to the locked Codex commit
         shell: bash
         run: |
@@ -40,3 +46,13 @@ jobs:
       - name: PowerShell 7 helper tests
         shell: pwsh
         run: .\tests\installer-helpers.tests.ps1
+
+  macos-installer:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Apple Silicon installer integration tests
+        shell: bash
+        run: ./tests/macos-installer.tests.sh

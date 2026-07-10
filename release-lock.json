@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "projectVersion": "0.2.0",
-  "releaseTag": "v0.2.0",
+  "projectVersion": "0.3.0",
+  "releaseTag": "v0.3.0",
   "codexVersion": "0.144.1",
   "upstreamTag": "rust-v0.144.1",
   "upstreamTagObject": "db75c19352d29ef29c17dbcf73a7244f1b1a8d10",
@@ -12,12 +12,28 @@
     "path": "patches/codex-0.144.1.patch",
     "sha256": "02d74d7c01f34c72e0c1e244db334ce09fde9dd01b12f56b6741f001ceed9d53"
   },
+  "releaseSigning": {
+    "algorithm": "rsa-pkcs1v15-sha256",
+    "publicKeyPath": "keys/release-signing-public.pem",
+    "publicKeySha256": "c004c4a7baf1f3dedfcfca3346db7d93b37a148d0455b01a56fb5859f31488d0",
+    "signatureSize": 384
+  },
   "targets": [
     {
       "os": "windows",
       "arch": "x86_64",
       "triple": "x86_64-pc-windows-msvc",
-      "archive": "zip"
+      "archive": "zip",
+      "runner": "windows-2022",
+      "executable": "codex.exe"
+    },
+    {
+      "os": "macos",
+      "arch": "aarch64",
+      "triple": "aarch64-apple-darwin",
+      "archive": "tar.gz",
+      "runner": "macos-15",
+      "executable": "codex"
     }
   ]
 }

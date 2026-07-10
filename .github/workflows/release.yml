@@ -26,6 +26,8 @@ jobs:
       rust_toolchain: ${{ steps.lock.outputs.rust_toolchain }}
       patch_sha256: ${{ steps.lock.outputs.patch_sha256 }}
       patch_path: ${{ steps.lock.outputs.patch_path }}
+      build_matrix: ${{ steps.lock.outputs.build_matrix }}
+      customization_commit: ${{ steps.lock.outputs.customization_commit }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -38,6 +40,7 @@ jobs:
           args=()
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then args+=(--tag "$GITHUB_REF_NAME"); fi
           python3 scripts/verify_release_lock.py "${args[@]}" --github-output "$GITHUB_OUTPUT"
+          echo "customization_commit=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
       - name: Verify the immutable upstream tag
         shell: bash
         env:
@@ -65,6 +68,7 @@ jobs:
           set -euo pipefail
           npm view "@openai/codex@$CODEX_VERSION" version --json
           npm view "@openai/codex@$CODEX_VERSION-win32-x64" version --json
+          npm view "@openai/codex@$CODEX_VERSION-darwin-arm64" version --json
 
   patch-tests:
     needs: metadata
@@ -81,6 +85,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: customization
+          ref: ${{ needs.metadata.outputs.customization_commit }}
           persist-credentials: false
       - name: Apply and validate patch
         shell: bash
@@ -101,17 +106,35 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
         run: cargo test --locked -p codex-tui status_line_
 
+  windows-installer-tests:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Windows PowerShell 5.1 helper tests
+        shell: powershell
+        run: .\tests\installer-helpers.tests.ps1
+      - name: PowerShell 7 helper tests
+        shell: pwsh
+        run: .\tests\installer-helpers.tests.ps1
+
+  macos-installer-tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Apple Silicon installer integration tests
+        shell: bash
+        run: ./tests/macos-installer.tests.sh
+
   build:
     needs: metadata
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - runner: windows-2022
-            target: x86_64-pc-windows-msvc
-            executable: codex.exe
-            archive: zip
+      matrix: ${{ fromJSON(needs.metadata.outputs.build_matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out locked upstream Codex at workspace root
@@ -124,6 +147,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           path: customization
+          ref: ${{ needs.metadata.outputs.customization_commit }}
           persist-credentials: false
       - name: Apply locked customization patch
         shell: bash
@@ -137,7 +161,7 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: Configure MSVC environment
-        if: runner.os == 'Windows'
+        if: matrix.os == 'windows'
         uses: ./.github/actions/setup-msvc-env
         with:
           target: ${{ matrix.target }}
@@ -153,58 +177,60 @@ jobs:
             export LIBSQLITE3_FLAGS=SQLITE_DISABLE_INTRINSIC
           fi
           cargo build --locked --release --target "$TARGET" -p codex-cli --bin codex
+      - name: Strip and ad-hoc sign the Apple Silicon binary
+        if: matrix.os == 'macos'
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          EXECUTABLE: ${{ matrix.executable }}
+        run: |
+          set -euo pipefail
+          target_root="$RUNNER_TEMP/cargo-target"
+          if [[ "$RUNNER_OS" == Windows ]]; then target_root="$(cygpath -u "$RUNNER_TEMP")/cargo-target"; fi
+          binary="$target_root/$TARGET/release/$EXECUTABLE"
+          /usr/bin/strip -S "$binary"
+          /usr/bin/codesign --force --sign - --timestamp=none "$binary"
+          [[ "$(/usr/bin/lipo -archs "$binary")" == arm64 ]]
+          /usr/bin/codesign --verify --deep --strict --verbose=2 "$binary"
+          set +e
+          /usr/sbin/spctl --assess --type execute --verbose=2 "$binary"
+          gatekeeper_status=$?
+          set -e
+          echo "Gatekeeper assessment exit status: $gatekeeper_status"
       - name: Verify native release binary
-        shell: pwsh
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
           EXECUTABLE: ${{ matrix.executable }}
           CODEX_VERSION: ${{ needs.metadata.outputs.codex_version }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $binary = Join-Path $env:RUNNER_TEMP "cargo-target/$env:TARGET/release/$env:EXECUTABLE"
-          if (-not (Test-Path -LiteralPath $binary -PathType Leaf)) { throw "Missing release binary: $binary" }
-          $version = (& $binary --version | Out-String).Trim()
-          if ($LASTEXITCODE -ne 0 -or -not $version.Contains($env:CODEX_VERSION)) {
-            throw "Unexpected release binary version: $version"
-          }
-      - name: Package release asset
-        shell: pwsh
+          set -euo pipefail
+          target_root="$RUNNER_TEMP/cargo-target"
+          if [[ "$RUNNER_OS" == Windows ]]; then target_root="$(cygpath -u "$RUNNER_TEMP")/cargo-target"; fi
+          binary="$target_root/$TARGET/release/$EXECUTABLE"
+          [[ -f "$binary" ]]
+          version=$("$binary" --version)
+          [[ "$version" == *"$CODEX_VERSION"* ]]
+      - name: Package deterministic release candidate
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
           EXECUTABLE: ${{ matrix.executable }}
-          ARCHIVE_KIND: ${{ matrix.archive }}
-          PROJECT_VERSION: ${{ needs.metadata.outputs.project_version }}
-          CODEX_VERSION: ${{ needs.metadata.outputs.codex_version }}
-          UPSTREAM_TAG: ${{ needs.metadata.outputs.upstream_tag }}
-          UPSTREAM_COMMIT: ${{ needs.metadata.outputs.upstream_commit }}
-          UPSTREAM_TREE: ${{ needs.metadata.outputs.upstream_tree }}
-          RUST_TOOLCHAIN: ${{ needs.metadata.outputs.rust_toolchain }}
-          PATCH_SHA256: ${{ needs.metadata.outputs.patch_sha256 }}
+          TARGET_OS: ${{ matrix.os }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          $stage = Join-Path $env:RUNNER_TEMP 'release-stage'
-          $dist = Join-Path $env:GITHUB_WORKSPACE 'customization/dist'
-          New-Item -ItemType Directory -Force -Path $stage, $dist | Out-Null
-          $binary = Join-Path $env:RUNNER_TEMP "cargo-target/$env:TARGET/release/$env:EXECUTABLE"
-          Copy-Item -LiteralPath $binary -Destination (Join-Path $stage $env:EXECUTABLE)
-          Copy-Item -LiteralPath 'customization/LICENSE' -Destination (Join-Path $stage 'LICENSE')
-          Copy-Item -LiteralPath 'customization/NOTICE.md' -Destination (Join-Path $stage 'NOTICE.md')
-          $binaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $binary).Hash.ToLowerInvariant()
-          $metadata = [ordered]@{
-            schemaVersion = 1; projectVersion = $env:PROJECT_VERSION; codexVersion = $env:CODEX_VERSION
-            upstreamTag = $env:UPSTREAM_TAG; upstreamCommit = $env:UPSTREAM_COMMIT; upstreamTree = $env:UPSTREAM_TREE
-            rustToolchain = $env:RUST_TOOLCHAIN; patchSha256 = $env:PATCH_SHA256
-            customizationCommit = $env:GITHUB_SHA; target = $env:TARGET; binarySha256 = $binaryHash
-          }
-          $metadataPath = Join-Path $stage 'BUILD-METADATA.json'
-          [IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
-          $assetBase = "codex-usage-statusline-$env:PROJECT_VERSION-codex-$env:CODEX_VERSION-$env:TARGET"
-          if ($env:ARCHIVE_KIND -ne 'zip') { throw "Unsupported Windows archive kind: $env:ARCHIVE_KIND" }
-          $asset = Join-Path $dist "$assetBase.zip"
-          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $asset -CompressionLevel Optimal
-          $archiveHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $asset).Hash.ToLowerInvariant()
-          [IO.File]::WriteAllText("$asset.sha256", "$archiveHash  $([IO.Path]::GetFileName($asset))`n", (New-Object Text.UTF8Encoding($false)))
-          Copy-Item -LiteralPath $metadataPath -Destination (Join-Path $dist "$assetBase.metadata.json")
+          set -euo pipefail
+          target_root="$RUNNER_TEMP/cargo-target"
+          if [[ "$RUNNER_OS" == Windows ]]; then target_root="$(cygpath -u "$RUNNER_TEMP")/cargo-target"; fi
+          binary="$target_root/$TARGET/release/$EXECUTABLE"
+          debug_stripped=false
+          if [[ "$TARGET_OS" == macos ]]; then debug_stripped=true; fi
+          python3 customization/scripts/release_assets.py package \
+            --lock customization/release-lock.json \
+            --target "$TARGET" \
+            --binary "$binary" \
+            --dist customization/dist \
+            --customization-commit "${{ needs.metadata.outputs.customization_commit }}" \
+            --debug-symbols-stripped "$debug_stripped"
       - name: Upload release candidate
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -212,15 +238,13 @@ jobs:
           path: customization/dist/*
           if-no-files-found: error
 
-  publish:
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [metadata, patch-tests, build]
+  assemble:
+    needs: [metadata, patch-tests, windows-installer-tests, macos-installer-tests, build]
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ needs.metadata.outputs.customization_commit }}
           persist-credentials: false
       - name: Download all release candidates
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -228,53 +252,45 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
-      - name: Generate release manifest and aggregate checksums
+      - name: Assemble and independently verify the release bundle
         shell: bash
+        env:
+          RELEASE_SIGNING_PRIVATE_KEY: ${{ secrets.RELEASE_SIGNING_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import hashlib, json
-          from pathlib import Path
+          [[ -n "$RELEASE_SIGNING_PRIVATE_KEY" ]]
+          signing_key="$RUNNER_TEMP/release-signing-private.pem"
+          printf '%s\n' "$RELEASE_SIGNING_PRIVATE_KEY" >"$signing_key"
+          chmod 600 "$signing_key"
+          python3 scripts/release_assets.py assemble \
+            --lock release-lock.json --dist dist --signing-key "$signing_key" \
+            --customization-commit "${{ needs.metadata.outputs.customization_commit }}"
+          rm -f "$signing_key"
+          python3 scripts/release_assets.py verify --lock release-lock.json --release-dir dist \
+            --expected-customization-commit "${{ needs.metadata.outputs.customization_commit }}"
+      - name: Upload complete release bundle
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: release-bundle
+          path: dist/*
+          if-no-files-found: error
 
-          def sha256_file(path):
-              digest = hashlib.sha256()
-              with path.open('rb') as stream:
-                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                      digest.update(chunk)
-              return digest.hexdigest()
-
-          dist = Path('dist')
-          metadata = [json.loads(path.read_text()) for path in sorted(dist.glob('*.metadata.json'))]
-          expected_targets = {target['triple'] for target in json.loads(Path('release-lock.json').read_text())['targets']}
-          actual_targets = {entry['target'] for entry in metadata}
-          if actual_targets != expected_targets or len(metadata) != len(expected_targets):
-              raise SystemExit(f'target metadata mismatch: expected {expected_targets}, got {actual_targets}')
-          assets = []
-          for entry in metadata:
-              base = f"codex-usage-statusline-{entry['projectVersion']}-codex-{entry['codexVersion']}-{entry['target']}"
-              matches = list(dist.glob(base + '.zip'))
-              if len(matches) != 1:
-                  raise SystemExit(f'expected one archive for {base}, found {matches}')
-              path = matches[0]
-              entry['asset'] = path.name
-              entry['archiveSha256'] = sha256_file(path)
-              assets.append(entry)
-          lock = json.loads(Path('release-lock.json').read_text())
-          manifest = {
-              'schemaVersion': 1,
-              'projectVersion': lock['projectVersion'],
-              'codexVersion': lock['codexVersion'],
-              'upstreamTag': lock['upstreamTag'],
-              'upstreamCommit': lock['upstreamCommit'],
-              'patchSha256': lock['patch']['sha256'],
-              'assets': assets,
-          }
-          (dist / 'release-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
-          checksum_paths = sorted(p for p in dist.iterdir() if p.is_file())
-          with (dist / 'SHA256SUMS').open('w') as output:
-              for path in checksum_paths:
-                  output.write(f"{sha256_file(path)}  {path.name}\n")
-          PY
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [metadata, assemble]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.metadata.outputs.customization_commit }}
+          persist-credentials: false
+      - name: Download verified release bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-bundle
+          path: dist
       - name: Publish immutable GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -285,57 +301,12 @@ jobs:
         run: |
           set -euo pipefail
           validate_published_release() {
-            local destination=$1
+            destination=$1
             mkdir -p "$destination"
             gh release download "$RELEASE_TAG" --dir "$destination"
-            (cd "$destination" && sha256sum -c SHA256SUMS)
-            EXISTING_RELEASE="$destination" python3 - <<'PY'
-          import hashlib, json, os, re
-          from pathlib import Path
-
-          def sha256_file(path):
-              digest = hashlib.sha256()
-              with path.open('rb') as stream:
-                  for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                      digest.update(chunk)
-              return digest.hexdigest()
-
-          root = Path(os.environ['EXISTING_RELEASE'])
-          lock = json.loads(Path('release-lock.json').read_text())
-          target = lock['targets'][0]['triple']
-          base = f"codex-usage-statusline-{lock['projectVersion']}-codex-{lock['codexVersion']}-{target}"
-          expected_names = {
-              f'{base}.zip', f'{base}.zip.sha256', f'{base}.metadata.json',
-              'release-manifest.json', 'SHA256SUMS',
-          }
-          actual_names = {path.name for path in root.iterdir() if path.is_file()}
-          if actual_names != expected_names:
-              raise SystemExit(f'published asset set mismatch: expected {expected_names}, got {actual_names}')
-
-          archive = root / f'{base}.zip'
-          sidecar = (root / f'{base}.zip.sha256').read_text().strip()
-          match = re.fullmatch(r'([0-9a-f]{64})  ([^\s]+)', sidecar)
-          archive_hash = sha256_file(archive)
-          if not match or match.group(1) != archive_hash or match.group(2) != archive.name:
-              raise SystemExit('published archive sidecar is invalid')
-
-          metadata = json.loads((root / f'{base}.metadata.json').read_text())
-          manifest = json.loads((root / 'release-manifest.json').read_text())
-          if (manifest.get('projectVersion') != lock['projectVersion'] or
-              manifest.get('codexVersion') != lock['codexVersion'] or
-              manifest.get('upstreamTag') != lock['upstreamTag'] or
-              manifest.get('upstreamCommit') != lock['upstreamCommit'] or
-              manifest.get('patchSha256') != lock['patch']['sha256']):
-              raise SystemExit('published release manifest does not match release-lock.json')
-          assets = manifest.get('assets', [])
-          if len(assets) != 1 or assets[0].get('target') != target:
-              raise SystemExit('published release manifest target set is invalid')
-          if assets[0].get('asset') != archive.name or assets[0].get('archiveSha256') != archive_hash:
-              raise SystemExit('published release manifest archive record is invalid')
-          for key, value in metadata.items():
-              if assets[0].get(key) != value:
-                  raise SystemExit(f'published metadata mismatch for {key}')
-          PY
+            python3 scripts/release_assets.py verify \
+              --lock release-lock.json --release-dir "$destination" \
+              --expected-customization-commit "${{ needs.metadata.outputs.customization_commit }}"
           }
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
@@ -346,15 +317,13 @@ jobs:
               exit 0
             fi
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft \
+            gh release create "$RELEASE_TAG" --verify-tag --draft --prerelease \
               --title "codex-usage-statusline $PROJECT_VERSION for Codex $CODEX_VERSION" \
-              --notes "Prebuilt side-by-side status-line binary for Windows x64. Apple Silicon continuation steps are documented for a later Mac-based implementation. See README.md before installing."
+              --notes 'Prebuilt side-by-side status-line binaries for Windows x64 and Apple Silicon macOS. The macOS binary is ad-hoc signed and hash-verified, but it has no Apple Developer ID signature or notarization; Gatekeeper can reject quarantined copies. Use the repository installer described in README.md.'
           fi
 
           gh release upload "$RELEASE_TAG" dist/* --clobber
           uploaded="$RUNNER_TEMP/uploaded-release"
-          mkdir -p "$uploaded"
-          gh release download "$RELEASE_TAG" --dir "$uploaded"
+          validate_published_release "$uploaded"
           cmp dist/SHA256SUMS "$uploaded/SHA256SUMS"
-          (cd "$uploaded" && sha256sum -c SHA256SUMS)
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

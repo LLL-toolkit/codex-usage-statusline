@@ -114,6 +114,67 @@ try {
         Expand-StatuslineArchive $oversizedArchive $oversizedExtract
     } catch { $oversizedMetadataRejected = $true }
     if (-not $oversizedMetadataRejected) { throw 'An oversized BUILD-METADATA.json entry was accepted.' }
+
+    $signedContent = Join-Path $temp 'signed-content.txt'
+    $signaturePath = Join-Path $temp 'signed-content.sig'
+    [IO.File]::WriteAllText($signedContent, "signed release checksums`n", [Text.Encoding]::ASCII)
+    $testRsa = New-Object Security.Cryptography.RSACryptoServiceProvider -ArgumentList 2048
+    try {
+        $testParameters = $testRsa.ExportParameters($false)
+        $testSha = [Security.Cryptography.SHA256]::Create()
+        try { $testHash = $testSha.ComputeHash([IO.File]::ReadAllBytes($signedContent)) } finally { $testSha.Dispose() }
+        $testSignature = $testRsa.SignHash($testHash, [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'))
+        [IO.File]::WriteAllBytes($signaturePath, $testSignature)
+        $signatureValid = Test-RsaSha256Signature `
+            $signedContent $signaturePath `
+            ([Convert]::ToBase64String($testParameters.Modulus)) `
+            ([Convert]::ToBase64String($testParameters.Exponent)) `
+            $testSignature.Length
+        if (-not $signatureValid) { throw 'A valid RSA SHA-256 signature was rejected.' }
+        [IO.File]::AppendAllText($signedContent, 'tampered', [Text.Encoding]::ASCII)
+        $tamperedAccepted = Test-RsaSha256Signature `
+            $signedContent $signaturePath `
+            ([Convert]::ToBase64String($testParameters.Modulus)) `
+            ([Convert]::ToBase64String($testParameters.Exponent)) `
+            $testSignature.Length
+        if ($tamperedAccepted) { throw 'A tampered signed checksum file was accepted.' }
+    } finally {
+        $testRsa.Dispose()
+    }
+
+    $sumsPath = Join-Path $temp 'SHA256SUMS'
+    [IO.File]::WriteAllText($sumsPath, (('a' * 64) + "  asset.zip`n"), [Text.Encoding]::ASCII)
+    $sums = Read-Sha256Sums $sumsPath
+    Assert-Equal $sums['asset.zip'] ('a' * 64) 'A canonical SHA256SUMS record was not parsed.'
+    [IO.File]::WriteAllText($sumsPath, (('a' * 64) + "  asset.zip`r`n"), [Text.Encoding]::ASCII)
+    $nonCanonicalSumsRejected = $false
+    try { Read-Sha256Sums $sumsPath | Out-Null } catch { $nonCanonicalSumsRejected = $true }
+    if (-not $nonCanonicalSumsRejected) { throw 'Non-canonical SHA256SUMS line endings were accepted.' }
+
+    $fixtureCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    $releaseManifest = [pscustomobject]@{
+        schemaVersion = 1
+        projectVersion = $ProjectVersion
+        codexVersion = $SupportedCodexVersion
+        upstreamCommit = $ExpectedUpstreamCommit
+        patchSha256 = $ExpectedPatchSha256
+        customizationCommit = $fixtureCommit
+        assets = @(
+            [pscustomobject]@{ target = 'x86_64-pc-windows-msvc'; customizationCommit = $fixtureCommit },
+            [pscustomobject]@{ target = 'aarch64-apple-darwin'; customizationCommit = $fixtureCommit }
+        )
+    }
+    $selectedManifestAsset = Get-ReleaseManifestAsset `
+        $releaseManifest $ProjectVersion $SupportedCodexVersion $ExpectedUpstreamCommit `
+        $ExpectedPatchSha256 $fixtureCommit 'x86_64-pc-windows-msvc'
+    Assert-Equal $selectedManifestAsset.target 'x86_64-pc-windows-msvc' 'The signed Windows manifest asset was not selected.'
+    $wrongCommitManifestRejected = $false
+    try {
+        Get-ReleaseManifestAsset `
+            $releaseManifest $ProjectVersion $SupportedCodexVersion $ExpectedUpstreamCommit `
+            $ExpectedPatchSha256 ('b' * 40) 'x86_64-pc-windows-msvc' | Out-Null
+    } catch { $wrongCommitManifestRejected = $true }
+    if (-not $wrongCommitManifestRejected) { throw 'A signed release manifest from a different commit was accepted.' }
 } finally {
     Remove-Item -LiteralPath $temp -Recurse -Force
 }
@@ -123,6 +184,8 @@ $lock = [IO.File]::ReadAllText((Join-Path $repoRoot 'release-lock.json'), [Text.
 Assert-Equal $lock.projectVersion $ProjectVersion 'release-lock.json and install.ps1 project versions differ.'
 Assert-Equal $lock.codexVersion $SupportedCodexVersion 'release-lock.json and install.ps1 Codex versions differ.'
 Assert-Equal $lock.releaseTag $ReleaseTag 'release-lock.json and install.ps1 release tags differ.'
+Assert-Equal $lock.releaseSigning.publicKeySha256 $ReleaseSigningPublicKeySha256 'The Windows release-signing key checksum is stale.'
+Assert-Equal $lock.releaseSigning.signatureSize $ReleaseSigningSignatureSize 'The Windows release signature size is stale.'
 $patchPath = Join-Path $repoRoot ($lock.patch.path -replace '/', '\')
 Assert-Equal (Get-Sha256 $patchPath) $lock.patch.sha256 'The locked patch SHA-256 is stale.'
 $patchText = [IO.File]::ReadAllText($patchPath, [Text.Encoding]::UTF8)

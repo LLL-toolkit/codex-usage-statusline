@@ -1,51 +1,89 @@
-# macOS Apple Silicon 작업 인계
+# macOS Apple Silicon 검증 기록
 
-> 현재 상태: **미구현**. 이번 릴리스는 Windows x64만 제공합니다. macOS용 바이너리, 릴리스 아카이브, 설치기, 제거기는 아직 없으므로 저장소 링크만으로 Mac에 설치할 수 있다고 안내하면 안 됩니다.
+> 현재 상태: **v0.3.0 릴리스 후보 검증 중**. 설치기·제거기와 격리 통합 테스트는 구현됐지만, GitHub Actions 산출물과 production Release URL의 실기기 설치가 끝날 때까지 README의 macOS 항목은 지원 완료로 전환하지 않습니다.
 
-이 문서는 나중에 Apple Silicon Mac에서 Codex가 작업을 이어가기 위한 체크리스트입니다. Windows 구현과 같은 Rust 패치를 재사용합니다. 구현 과정에서 필요하면 Codex가 Xcode Command Line Tools, Rust 도구 체인과 고정 Codex 소스를 자동으로 준비하고 빌드할 수 있으며, 사용자에게 중간 설치 작업을 시키지 않아야 합니다.
+## 구현 기준
 
-## 유지할 구조
+- 대상은 `aarch64-apple-darwin` 하나이며 Intel Mac을 포함하지 않습니다.
+- Windows와 같은 Codex 0.144.1 Rust 패치, 상태줄 항목, 연보라색 스타일, 한국어·영어·일본어 런타임 선택을 사용합니다.
+- 공식 Codex 설치를 덮어쓰지 않고 `~/Library/Application Support/codex-usage-statusline`에 리소스 번들을 복제합니다.
+- 실행기는 매 호출마다 `CODEX_USAGE_STATUSLINE_LANGUAGE`와 `-c tui.status_line=[...]`을 전달합니다.
+- `~/.codex/config.toml`은 설치·반복 설치·제거·롤백 중 생성하거나 수정하지 않습니다.
+- OpenAI standalone, Homebrew, npm의 현재 사용자 설치를 탐지하고 네이티브 바이너리 버전과 arm64 아키텍처를 확인합니다.
+- zsh는 설정된 절대 경로 `$ZDOTDIR/.zprofile` 또는 기본 `~/.zprofile`, bash는 `~/.bash_profile`에 정확히 하나의 관리 블록을 원자적으로 추가하며, 제거 시 manifest에 기록한 경로에서 블록 밖의 변경을 보존합니다.
 
-- 공통 상태줄 기능과 한국어·영어·일본어 런타임 선택은 기존 Rust 패치 하나에서 유지합니다.
-- GitHub Actions에서 `aarch64-apple-darwin` 바이너리를 빌드하고 릴리스 아카이브와 SHA-256을 게시해야 합니다.
-- 최종 Mac 설치는 검증된 사전 빌드 아카이브를 우선 사용합니다. 아카이브가 아직 없는 최초 구현·검증 단계에서는 Codex가 필요한 Xcode/Rust 도구와 소스를 자동으로 준비해 빌드해도 됩니다.
-- 공식 Codex 설치를 덮어쓰지 않고 사용자 상태 폴더에 리소스 번들을 복제한 뒤, 사용자 PATH 앞에 별도 실행기를 연결해야 합니다.
-- 실행기는 매 호출마다 `CODEX_USAGE_STATUSLINE_LANGUAGE`와 `-c tui.status_line=[...]` 재정의를 전달해야 합니다. `~/.codex/config.toml`은 만들거나 수정하면 안 됩니다.
-- 설치와 제거는 사용자 권한으로 끝나야 하며, 설치기가 소유한 프로필 블록과 상태 파일만 되돌려야 합니다.
+## 실패 폐쇄 검증
 
-## 구현 체크리스트
+macOS 설치기는 다음 파일을 고정된 HTTPS Release에서 가져옵니다.
 
-1. `release-lock.json`에 `aarch64-apple-darwin` 대상을 추가하고 잠금 검증 스크립트가 Windows와 Mac 대상을 모두 검사하게 합니다.
-2. 릴리스 워크플로에 Apple Silicon 빌드, 집중 TUI 테스트, 디버그 정보 제거, 서명, 아카이브, 바이너리 해시와 빌드 메타데이터 생성을 추가합니다.
-3. macOS 설치기와 제거기를 새로 구현합니다. OS/CPU/Codex 버전 확인, 고정된 HTTPS 릴리스 URL, 체크섬과 메타데이터 검증, 안전한 압축 해제, 트랜잭션 롤백을 포함합니다.
-4. OpenAI 독립 설치기, Homebrew, npm에서 현재 사용자에게 활성화된 공식 Codex 리소스 번들을 찾는 방식을 각각 검증합니다.
-5. zsh와 bash에서 관리 블록을 중복 없이 추가·제거하고, 기존 프로필 내용과 사용자 변경을 보존합니다.
-6. 실행기가 언어 환경 변수와 상태줄 `-c` 재정의를 커스텀 바이너리 앞에 전달하도록 구현합니다.
-7. 셸 구문, 경로 공백, 잘못된 아카이브, 체크섬 불일치, 중단된 설치, 반복 설치, 제거 롤백을 자동 테스트합니다.
-8. `README.md`, `README.en.md`, `README.ja.md`, `AGENTS.md`, 릴리스 문서를 실제 구현과 함께 갱신합니다.
+```text
+codex-usage-statusline-<project>-codex-<codex>-aarch64-apple-darwin.tar.gz
+동일 파일명.sha256
+동일 기본명.metadata.json
+release-manifest.json
+SHA256SUMS
+SHA256SUMS.sig
+```
 
-## 서명과 배포 게이트
+`scripts/release_assets.py`는 저장소에 해시와 함께 고정한 RSA-3072 공개키로 `SHA256SUMS.sig`를 먼저 검증합니다. 그 뒤 원격 릴리스 태그의 peeled commit, 서명된 `customizationCommit`, 전체 파일 집합과 aggregate 체크섬, 대상별 sidecar, 외부·내부 빌드 메타데이터, 아카이브 및 바이너리 SHA-256을 서로 대조합니다. 압축 파일에서는 `codex`, `LICENSE`, `NOTICE.md`, `BUILD-METADATA.json` 네 일반 파일만 추출하며 경로 이동, 링크, 중복 항목, 크기 초과를 거부합니다.
 
-- 최소한 아카이브 안의 실행 파일에 대한 `codesign --verify --deep --strict` 결과를 기록합니다.
-- Apple Developer ID 서명과 공증을 사용하지 않는다면 Gatekeeper의 `spctl` 거부 가능성을 README와 릴리스 노트에 명확히 적습니다.
-- 아카이브, `.sha256`, 대상별 메타데이터, `release-manifest.json`, `SHA256SUMS`가 서로 같은 버전과 해시를 가리키는지 확인합니다.
-- Windows 아카이브를 Mac 설치기가 선택하거나 실행할 수 없도록 대상 검사를 실패 폐쇄 방식으로 구현합니다.
+설치 전 활성 Codex와 릴리스 바이너리에서 0.144.1을 각각 확인합니다. 실제 릴리스 바이너리는 `lipo -archs` 결과가 `arm64` 하나인지 확인하고 `codesign --verify --deep --strict`를 통과해야 합니다.
 
-## Apple Silicon 실기기 검증
+## 트랜잭션과 복구
 
-구현과 CI가 끝난 뒤 Apple Silicon Mac에서만 다음 흐름을 검증합니다. 이 단계가 끝나기 전에는 README에 macOS를 지원 대상으로 올리지 않습니다.
+- 상태 폴더별 operation lock은 macOS `lockf`의 커널 advisory lock으로 동시 설치·제거를 차단합니다. 프로세스가 종료되면 커널이 잠금을 해제하므로 남은 lock 파일 내용이나 PID 재사용에 의존하지 않습니다.
+- 다운로드와 번들 복제는 `.staging.*` 아래에서 수행합니다.
+- 프로필 원본은 작업 중 백업하며 활성 manifest를 마지막에 원자적으로 게시합니다.
+- 설치 실패는 프로필, 실행기, 버전 번들을 이전 상태로 되돌립니다.
+- 제거는 프로필 블록을 제거한 뒤 payload를 staging으로 이동하고, 실패하면 payload와 프로필을 모두 복원합니다.
+- SIGKILL로 남은 staging은 다음 작업이 복구하며, `lockf` 잠금은 프로세스 종료 시 커널이 자동 해제합니다.
+- 설치 시 실행기와 커스텀 번들의 모든 디렉터리, 일반 파일 경로·모드·SHA-256 inventory를 기록합니다. 파일 추가·삭제·변경, 링크나 특수 파일이 발견되면 전체 payload를 제거하지 않고 PATH에서만 비활성화합니다.
 
-1. 공식 Codex CLI 0.144.1을 지원하려는 각 설치 방식으로 준비합니다.
-2. 기존 Codex에 저장소 URL만 주고 설치를 요청해, 저장소의 macOS 설치기가 자동 선택되는지 확인합니다.
-3. 일반 릴리스 설치는 사전 빌드 자산을 사용하는지 확인합니다. 소스 빌드 경로도 제공한다면 Codex가 도구 설치부터 빌드·검증까지 자동으로 끝내고 사용자에게 수동 단계를 요구하지 않는지 별도로 확인합니다.
-4. 새 터미널에서 `command -v codex`, `codex --version`, 실제 TUI 상태줄을 확인합니다.
-5. 한국어, 영어, 일본어를 각각 설치해 라벨과 초기화 시간이 맞는지 확인합니다.
-6. 설치 전후와 제거 후 `~/.codex/config.toml`의 존재 여부와 SHA-256이 그대로인지 확인합니다.
-7. 현재 Codex 실행 중 설치, 홈 경로 공백, 관리자 권한 없음, 체크섬 실패, 네트워크 중단, 반복 설치, 수정된 관리 파일 제거를 확인합니다.
-8. 제거 후 공식 Codex 명령이 다시 선택되고 설치기 소유 프로필 블록과 상태 번들만 사라지는지 확인합니다.
+## 자동 테스트 기록
 
-## 완료 조건
+2026-07-10 Apple Silicon Mac에서 `tests/macos-installer.tests.sh`로 다음 격리 시나리오를 통과했습니다.
 
-Apple Silicon 릴리스 자산, 설치기·제거기, 자동 테스트, 서명 결과, 세 언어, `config.toml` 무변경, 실패 롤백, 실제 설치·제거가 모두 통과해야 macOS 지원을 문서화할 수 있습니다. 그전까지는 이 문서를 구현 인계 자료로만 취급합니다.
+- npm, OpenAI standalone, Homebrew 레이아웃 탐지
+- 홈·상태 경로 공백과 실행기 인자 보존
+- zsh와 bash의 새 로그인 셸 명령 해석
+- 사용자 지정 `ZDOTDIR` 설치, 환경 변수가 없는 반복 설치·제거, 정확한 프로필 복원
+- 잘못된 아카이브 체크섬과 네트워크 연결 실패
+- 잘못된 `SHA256SUMS.sig`와 서명 파일 여분 바이트
+- 유효하게 서명됐지만 다른 `customizationCommit`을 가진 릴리스
+- 두 프로필 변경 후 설치 롤백
+- 프로필 활성화 후 SIGKILL과 다음 설치의 정확한 stale 상태 복구
+- payload 이동 후 SIGKILL과 다음 제거의 정확한 payload·프로필 복구
+- 남은 lock 파일 내용 무시와 실제 동시 작업 차단
+- 설치·제거 manifest 커밋 경계에서 종료 신호를 받은 경우의 전체 롤백
+- 반복 설치의 PATH 블록 중복 방지
+- 프로필 외부 사용자 변경 보존
+- 번들 내부 추가 파일 탐지와 payload 전체 보존
+- payload 이동 후 제거 롤백
+- 설치 전후와 제거 후 테스트 `config.toml` SHA-256 불변
+
+`tests/release_assets_tests.py`는 tar 경로 이동, tar 심볼릭 링크, ZIP 중복 항목, 잘못된 macOS 서명 메타데이터를 거부하고, 임시 RSA 키로 full·selected release bundle 조립·서명·추출과 소스 커밋 결속을 직접 검증합니다. 같은 파일에서 프로필 블록 경계 편집과 custom `ZDOTDIR` manifest도 단위 테스트합니다.
+
+## 서명과 Gatekeeper
+
+현재 환경에는 유효한 Apple 코드 서명 identity가 없습니다. GitHub Actions는 arm64 바이너리의 디버그 정보를 제거하고 ad-hoc 서명한 뒤 `codesign --verify --deep --strict`를 실행합니다.
+
+Apple 코드 서명과 별개로 릴리스 체크섬은 프로젝트 RSA 키로 서명합니다. 공개키와 SHA-256은 `release-lock.json`에 고정하며 비밀키는 `RELEASE_SIGNING_PRIVATE_KEY` GitHub Actions secret으로만 사용합니다. 서명된 manifest는 모든 대상의 `customizationCommit`을 태그가 가리키는 정확한 저장소 커밋에 결속합니다. 이는 릴리스 자산 변조를 검출하지만 Apple Developer ID 신원이나 공증을 대신하지 않습니다.
+
+ad-hoc 서명은 Apple Developer ID 신원이나 공증을 제공하지 않습니다. 따라서 Finder나 브라우저가 격리 속성을 붙인 파일은 Gatekeeper의 `spctl` 평가에서 거부될 수 있습니다. 설치기는 이 제한을 숨기기 위해 격리 속성을 삭제하지 않습니다.
+
+## 남은 실기기 게이트
+
+- [ ] 일반 push CI에서 macOS 설치기 테스트 통과
+- [ ] workflow dispatch에서 실제 arm64 빌드·strip·codesign·집중 Rust 테스트 통과
+- [ ] 완성된 release bundle의 전체 파일 집합과 SHA-256 재검증
+- [ ] npm 설치의 공식 Codex 0.144.1에서 릴리스 후보 설치
+- [ ] 새 zsh와 bash에서 `command -v codex`, `codex --version` 확인
+- [ ] 한국어·영어·일본어의 실제 TUI 라벨과 숫자·그래프 확인
+- [ ] 설치 전후와 제거 후 실제 `~/.codex/config.toml` 존재 여부 및 SHA-256 불변 확인
+- [ ] 실제 아카이브와 설치된 내부 바이너리 SHA-256 대조
+- [ ] 제거 후 공식 Codex 명령 복원
+- [ ] v0.3.0 production GitHub Release URL에서 동일 흐름 재확인
+
+모든 항목이 끝나면 이 문서에 실행 시각, 장비·OS, 설치 방식, 명령 해석 경로, 아카이브·바이너리 해시, `codesign`·`spctl`, config 불변 결과를 기록하고 지원 상태를 전환합니다.
 
 관련 문서: [README](../README.md), [릴리스 절차](release-process.md).

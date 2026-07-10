@@ -3,7 +3,7 @@ param(
     [ValidateSet('ko', 'en', 'ja')]
     [string]$Language = 'ko',
     [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'codex-usage-statusline'),
-    [string]$ReleaseTag = 'v0.2.0',
+    [string]$ReleaseTag = 'v0.3.0',
     [string]$ReleaseBaseUrl,
     [switch]$DryRun
 )
@@ -11,13 +11,25 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-$ProjectVersion = '0.2.0'
+$ProjectVersion = '0.3.0'
 $SupportedCodexVersion = '0.144.1'
 $TargetTriple = 'x86_64-pc-windows-msvc'
 $ExpectedUpstreamCommit = '44918ea10c0f99151c6710411b4322c2f5c96bea'
 $ExpectedPatchSha256 = '02d74d7c01f34c72e0c1e244db334ce09fde9dd01b12f56b6741f001ceed9d53'
 $Repository = 'LLL-toolkit/codex-usage-statusline'
 $StatusLineOverride = "tui.status_line=['model-with-reasoning','context-used','five-hour-limit','weekly-limit']"
+$ReleaseSigningPublicKeySha256 = 'c004c4a7baf1f3dedfcfca3346db7d93b37a148d0455b01a56fb5859f31488d0'
+$ReleaseSigningSignatureSize = 384
+$ReleaseSigningModulusBase64 = @(
+    '5n72MLqX+b6k3Nqgkeik3gctX0mbrywJSnuFFuw3J0wH6/9mL5zLRiyCAT+jf5xTjVoHY6n9T+DOUcDuAznH'
+    'Z1FCd+4ULlKfXzF0dYdUHMly+hNT6m6dguvgNL0eyI2vmqR3bjCgmQZcI8VGf9+/MjOBKaWUYyVwZ6za/Zol'
+    'oi5FPdwyyGvYQpsqeozT2ZLh8mfaHPzK8JOtjSgqV+vitxPnXJt0uFGvcQDJtt6hnIHqfhvyb7rfdLTw5aGm6'
+    '1hhHJKoAQ1m2U2e6xg8XcAHzmWlYUAjHLkZLE2ir7OohARw3M/u/Mdx7LbMy+N3hV/qrFe76gMqkg78/Ya0E'
+    'mgL7N1m8WBGNcqyYw+wTYjnVCAVdZxUitmEifwnLb/RNQMleX58/e8HrtXl6QcCQQjV1xvf6yjcz8laOEsuY'
+    '6KwLnFdXNJ+d/aaALxCTvatPPg+G/+ircB9CG93erbjxfIWDH3nAw6qWyX3I06szxjU2xK+2KpRNliAHmv7XF'
+    '60TYYf'
+) -join ''
+$ReleaseSigningExponentBase64 = 'AQAB'
 
 function Get-Sha256([string]$Path) {
     (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
@@ -25,6 +37,96 @@ function Get-Sha256([string]$Path) {
 
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
     [System.IO.File]::WriteAllText($Path, $Content, $script:Utf8NoBom)
+}
+
+function Test-RsaSha256Signature(
+    [string]$ContentPath,
+    [string]$SignaturePath,
+    [string]$ModulusBase64 = $script:ReleaseSigningModulusBase64,
+    [string]$ExponentBase64 = $script:ReleaseSigningExponentBase64,
+    [int]$ExpectedSignatureSize = $script:ReleaseSigningSignatureSize
+) {
+    $signature = [IO.File]::ReadAllBytes($SignaturePath)
+    if ($signature.Length -ne $ExpectedSignatureSize) { return $false }
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = $sha.ComputeHash([IO.File]::ReadAllBytes($ContentPath)) } finally { $sha.Dispose() }
+    $parameters = New-Object Security.Cryptography.RSAParameters
+    $parameters.Modulus = [Convert]::FromBase64String($ModulusBase64)
+    $parameters.Exponent = [Convert]::FromBase64String($ExponentBase64)
+    $rsa = New-Object Security.Cryptography.RSACryptoServiceProvider
+    try {
+        $rsa.ImportParameters($parameters)
+        $rsa.VerifyHash($hash, [Security.Cryptography.CryptoConfig]::MapNameToOID('SHA256'), $signature)
+    } finally {
+        $rsa.Dispose()
+    }
+}
+
+function Read-Sha256Sums([string]$Path) {
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    if ($bytes.Length -eq 0 -or $bytes.Length -gt 64KB) { throw 'SHA256SUMS has an unsafe size.' }
+    if (@($bytes | Where-Object { $_ -gt 0x7f }).Count -gt 0) { throw 'SHA256SUMS must be ASCII.' }
+    $text = [Text.Encoding]::ASCII.GetString($bytes)
+    if (-not $text.EndsWith("`n") -or $text.Contains("`r")) { throw 'SHA256SUMS must use canonical LF line endings.' }
+    $records = @{}
+    foreach ($line in $text.Substring(0, $text.Length - 1).Split([char]10)) {
+        if ($line -cnotmatch '^([0-9a-f]{64})  ([^\s]+)$') { throw 'SHA256SUMS contains a malformed record.' }
+        $name = $Matches[2]
+        if ($records.ContainsKey($name)) { throw "SHA256SUMS contains a duplicate record: $name" }
+        $records[$name] = $Matches[1]
+    }
+    $records
+}
+
+function Resolve-ReleaseTagCommit([string]$RepositoryName, [string]$Tag) {
+    if ($Tag -notmatch '^v\d+\.\d+\.\d+$') { throw "Unsafe release tag: $Tag" }
+    if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git is required to resolve the immutable release tag.' }
+    $lines = @(& git ls-remote --tags "https://github.com/$RepositoryName.git" "refs/tags/$Tag" "refs/tags/$Tag^{}" 2>$null)
+    if ($LASTEXITCODE -ne 0) { throw "Could not resolve release tag $Tag." }
+    $direct = @()
+    $peeled = @()
+    foreach ($line in $lines) {
+        $fields = @($line -split '\s+', 2)
+        if ($fields.Count -ne 2 -or $fields[0] -notmatch '^[0-9a-f]{40}$') { continue }
+        if ($fields[1] -eq "refs/tags/$Tag") { $direct += $fields[0] }
+        if ($fields[1] -eq "refs/tags/$Tag^{}") { $peeled += $fields[0] }
+    }
+    $candidates = @(if ($peeled.Count -gt 0) { $peeled } else { $direct })
+    if ($candidates.Count -ne 1) { throw "Expected one commit for release tag $Tag." }
+    $candidates[0]
+}
+
+function Get-ReleaseManifestAsset(
+    [object]$Manifest,
+    [string]$ExpectedProjectVersion,
+    [string]$ExpectedCodexVersion,
+    [string]$ExpectedUpstreamCommit,
+    [string]$ExpectedPatchSha256,
+    [string]$ExpectedCustomizationCommit,
+    [string]$ExpectedTarget
+) {
+    if ($Manifest.schemaVersion -ne 1 -or
+        $Manifest.projectVersion -ne $ExpectedProjectVersion -or
+        $Manifest.codexVersion -ne $ExpectedCodexVersion -or
+        $Manifest.upstreamCommit -ne $ExpectedUpstreamCommit -or
+        $Manifest.patchSha256 -ne $ExpectedPatchSha256 -or
+        $Manifest.customizationCommit -ne $ExpectedCustomizationCommit) {
+        throw 'The signed release manifest does not match the requested release and source commit.'
+    }
+    $assets = @($Manifest.assets)
+    if ($assets.Count -ne 2) { throw 'The signed release manifest must contain exactly two targets.' }
+    $targets = @($assets | ForEach-Object { $_.target } | Sort-Object)
+    if (($targets -join ',') -ne 'aarch64-apple-darwin,x86_64-pc-windows-msvc') {
+        throw 'The signed release manifest contains an unexpected target set.'
+    }
+    foreach ($asset in $assets) {
+        if ($asset.customizationCommit -ne $ExpectedCustomizationCommit) {
+            throw 'Release asset customization commits are inconsistent.'
+        }
+    }
+    $selected = @($assets | Where-Object { $_.target -eq $ExpectedTarget })
+    if ($selected.Count -ne 1) { throw "The signed release manifest is missing $ExpectedTarget." }
+    $selected[0]
 }
 
 function Get-CodexLauncherContent([string]$RelativeBinary, [string]$DisplayLanguage) {
@@ -299,12 +401,17 @@ if (-not $releaseUri.IsAbsoluteUri -or $releaseUri.Scheme -ne 'https') {
 }
 $assetUrl = "$($ReleaseBaseUrl.TrimEnd('/'))/$assetName"
 $checksumUrl = "$assetUrl.sha256"
+$aggregateChecksumUrl = "$($ReleaseBaseUrl.TrimEnd('/'))/SHA256SUMS"
+$aggregateSignatureUrl = "$aggregateChecksumUrl.sig"
+$releaseManifestUrl = "$($ReleaseBaseUrl.TrimEnd('/'))/release-manifest.json"
+$ExpectedCustomizationCommit = Resolve-ReleaseTagCommit $Repository $ReleaseTag
 
 if ($DryRun) {
     Write-Host "Codex: $($activeVersion.Output)"
     Write-Host "Official bundle: $($bundle.Root)"
     Write-Host "Release asset: $assetUrl"
     Write-Host "Language: $Language"
+    Write-Host "Customization commit: $ExpectedCustomizationCommit"
     Write-Host 'Dry run completed. No files were changed.' -ForegroundColor Green
     return
 }
@@ -326,6 +433,9 @@ if (Test-Path -LiteralPath $launcherDirectory) {
 }
 $archivePath = Join-Path $downloadRoot $assetName
 $checksumPath = "$archivePath.sha256"
+$aggregateChecksumPath = Join-Path $downloadRoot 'SHA256SUMS'
+$aggregateSignaturePath = Join-Path $downloadRoot 'SHA256SUMS.sig'
+$releaseManifestPath = Join-Path $downloadRoot 'release-manifest.json'
 $customBinary = Join-Path $versionRoot $bundle.BinaryRelativePath
 $oldUserPath = $null
 $installedUserPath = $null
@@ -347,6 +457,9 @@ try {
         $ProgressPreference = 'SilentlyContinue'
         Invoke-WebRequest -UseBasicParsing -Uri $assetUrl -OutFile $archivePath
         Invoke-WebRequest -UseBasicParsing -Uri $checksumUrl -OutFile $checksumPath
+        Invoke-WebRequest -UseBasicParsing -Uri $aggregateChecksumUrl -OutFile $aggregateChecksumPath
+        Invoke-WebRequest -UseBasicParsing -Uri $aggregateSignatureUrl -OutFile $aggregateSignaturePath
+        Invoke-WebRequest -UseBasicParsing -Uri $releaseManifestUrl -OutFile $releaseManifestPath
     }
     finally {
         $ProgressPreference = $previousProgressPreference
@@ -357,10 +470,56 @@ try {
     if ((Get-Item -LiteralPath $checksumPath).Length -gt 4KB) {
         throw 'The release checksum file exceeds the 4 KB safety limit.'
     }
+    $aggregateChecksumSize = (Get-Item -LiteralPath $aggregateChecksumPath).Length
+    if ($aggregateChecksumSize -le 0 -or $aggregateChecksumSize -gt 64KB) {
+        throw 'The aggregate release checksum file has an unsafe size.'
+    }
+    if ((Get-Item -LiteralPath $aggregateSignaturePath).Length -ne $ReleaseSigningSignatureSize) {
+        throw 'The aggregate release signature has an invalid size.'
+    }
+    if (-not (Test-RsaSha256Signature $aggregateChecksumPath $aggregateSignaturePath)) {
+        throw 'The aggregate release checksum signature is invalid.'
+    }
+    $aggregateChecksums = Read-Sha256Sums $aggregateChecksumPath
+    $windowsBase = "codex-usage-statusline-$ProjectVersion-codex-$SupportedCodexVersion-x86_64-pc-windows-msvc"
+    $macBase = "codex-usage-statusline-$ProjectVersion-codex-$SupportedCodexVersion-aarch64-apple-darwin"
+    $expectedReleaseFiles = @(
+        "$windowsBase.zip", "$windowsBase.zip.sha256", "$windowsBase.metadata.json",
+        "$macBase.tar.gz", "$macBase.tar.gz.sha256", "$macBase.metadata.json",
+        'release-manifest.json'
+    )
+    if ($aggregateChecksums.Count -ne $expectedReleaseFiles.Count) {
+        throw 'SHA256SUMS does not contain the exact locked release file set.'
+    }
+    foreach ($expectedReleaseFile in $expectedReleaseFiles) {
+        if (-not $aggregateChecksums.ContainsKey($expectedReleaseFile)) {
+            throw "SHA256SUMS is missing $expectedReleaseFile."
+        }
+    }
+    $releaseManifestSize = (Get-Item -LiteralPath $releaseManifestPath).Length
+    if ($releaseManifestSize -le 0 -or $releaseManifestSize -gt 1MB) {
+        throw 'The signed release manifest has an unsafe size.'
+    }
+    if ((Get-Sha256 $releaseManifestPath) -ne $aggregateChecksums['release-manifest.json']) {
+        throw 'The release manifest does not match the signed aggregate checksum.'
+    }
+    $releaseManifest = [IO.File]::ReadAllText($releaseManifestPath, [Text.Encoding]::UTF8) | ConvertFrom-Json
+    $manifestAsset = Get-ReleaseManifestAsset `
+        $releaseManifest $ProjectVersion $SupportedCodexVersion $ExpectedUpstreamCommit `
+        $ExpectedPatchSha256 $ExpectedCustomizationCommit $TargetTriple
     $checksumText = [IO.File]::ReadAllText($checksumPath, [Text.Encoding]::ASCII).Trim()
-    if ($checksumText -notmatch '^([0-9a-fA-F]{64})\s+([^\s]+)$') { throw 'The release checksum file is malformed.' }
-    $expectedArchiveHash = $Matches[1].ToLowerInvariant()
+    if ($checksumText -cnotmatch '^([0-9a-f]{64})  ([^\s]+)$') { throw 'The release checksum file is malformed.' }
+    $expectedArchiveHash = $Matches[1]
     if ($Matches[2] -ne $assetName) { throw 'The release checksum names a different archive.' }
+    if ($aggregateChecksums[$assetName] -ne $expectedArchiveHash) {
+        throw 'The target sidecar and signed aggregate archive checksums differ.'
+    }
+    if ($manifestAsset.asset -ne $assetName -or $manifestAsset.archiveSha256 -ne $expectedArchiveHash) {
+        throw 'The signed release manifest names a different Windows archive.'
+    }
+    if ((Get-Sha256 $checksumPath) -ne $aggregateChecksums["$assetName.sha256"]) {
+        throw 'The target checksum sidecar does not match the signed aggregate checksum.'
+    }
     $archiveHash = Get-Sha256 $archivePath
     if ($archiveHash -ne $expectedArchiveHash) { throw 'Release archive SHA-256 verification failed.' }
 
@@ -373,7 +532,8 @@ try {
         $buildMetadata.codexVersion -ne $SupportedCodexVersion -or
         $buildMetadata.target -ne $TargetTriple -or
         $buildMetadata.upstreamCommit -ne $ExpectedUpstreamCommit -or
-        $buildMetadata.patchSha256 -ne $ExpectedPatchSha256) {
+        $buildMetadata.patchSha256 -ne $ExpectedPatchSha256 -or
+        $buildMetadata.customizationCommit -ne $ExpectedCustomizationCommit) {
         throw 'Release build metadata does not match the requested project, Codex version, and target.'
     }
     $downloadedVersion = Get-CodexVersion $downloadedBinary
@@ -382,6 +542,10 @@ try {
     }
     $customHash = Get-Sha256 $downloadedBinary
     if ($buildMetadata.binarySha256 -ne $customHash) { throw 'Release binary SHA-256 does not match BUILD-METADATA.json.' }
+    if ($manifestAsset.binarySha256 -ne $customHash -or
+        $manifestAsset.customizationCommit -ne $buildMetadata.customizationCommit) {
+        throw 'Embedded metadata does not match the signed release manifest.'
+    }
 
     Write-Host 'Preparing a side-by-side Codex resource bundle...' -ForegroundColor Cyan
     Copy-Item -LiteralPath $bundle.Root -Destination $stagedBundle -Recurse -Force
@@ -422,6 +586,7 @@ try {
         projectVersion = $ProjectVersion
         releaseTag = $ReleaseTag
         codexVersion = $SupportedCodexVersion
+        customizationCommit = $ExpectedCustomizationCommit
         language = $Language
         targetTriple = $TargetTriple
         assetName = $assetName
