@@ -340,8 +340,17 @@ try {
     }
 
     Write-Host "Downloading the verified Windows release for Codex $SupportedCodexVersion..." -ForegroundColor Cyan
-    Invoke-WebRequest -UseBasicParsing -Uri $assetUrl -OutFile $archivePath
-    Invoke-WebRequest -UseBasicParsing -Uri $checksumUrl -OutFile $checksumPath
+    $previousProgressPreference = $ProgressPreference
+    try {
+        # Windows PowerShell 5.1 can make large Invoke-WebRequest downloads
+        # dramatically slower while calculating its legacy progress display.
+        $ProgressPreference = 'SilentlyContinue'
+        Invoke-WebRequest -UseBasicParsing -Uri $assetUrl -OutFile $archivePath
+        Invoke-WebRequest -UseBasicParsing -Uri $checksumUrl -OutFile $checksumPath
+    }
+    finally {
+        $ProgressPreference = $previousProgressPreference
+    }
     if ((Get-Item -LiteralPath $archivePath).Length -gt 600MB) {
         throw 'The downloaded release archive exceeds the 600 MB safety limit.'
     }
